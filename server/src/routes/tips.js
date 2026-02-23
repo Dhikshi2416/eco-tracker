@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 router.get('/', (req, res) => {
-  res.json({ message: "Leaderboard route working" });
+  res.json({ message: "Tips route working" });
 });
 
 module.exports = router;
