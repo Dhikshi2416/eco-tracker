@@ -1,0 +1,105 @@
+EcoTrack — System Architecture (React + Firebase + Cloudinary + TFJS)
+===================================================================
+
+1) High-level overview
+----------------------
+EcoTrack is a single-page web application built with React + Vite.
+It uses Firebase Authentication for user identity, Cloud Firestore for data storage
+and realtime updates, Cloudinary for photo storage (only URLs stored in Firestore),
+and TensorFlow.js + MobileNet in the browser for optional AI-based photo verification.
+
+
+2) Main components
+------------------
+
+A) Client (Web Browser)
+  - React + Vite UI (Landing, Auth, AppShell)
+  - Zustand store (client state + Firestore realtime subscriptions)
+  - Action logging form with required photo + AI verify
+  - Accessibility controls (high contrast / reduce motion / font size)
+  - Dashboard (stats, weekly chart, category breakdown)
+  - Action log (list + delete)
+  - Leaderboard (rankings from aggregated user totals)
+  - Share + Profile screens
+
+B) Firebase Authentication
+  - Email/password sign-in and sign-up
+  - Maintains session for the user
+  - Provides UID used to isolate data per user
+
+C) Cloud Firestore (Database)
+  - Stores:
+    - users (per-user profile + aggregated totals)
+    - actions (per-user action entries)
+    - challenges (master list)
+    - tips (public content)
+    - users/{uid}/challenges (per-user challenge progress)
+  - Realtime listeners (onSnapshot) update client state instantly
+
+D) Cloudinary (Photo storage + CDN)
+  - Receives image uploads from client using unsigned upload preset
+  - Returns secure_url
+  - Client stores only photoUrl in Firestore action document
+
+E) TensorFlow.js + MobileNet (Client-side AI)
+  - Model is loaded in the browser when user clicks "Verify photo with AI"
+  - The image is classified locally on the device
+  - If predicted labels contain sustainability keywords → "Verified"
+    else → "Not sustainable action"
+  - No image is sent to an AI server for verification; inference is local
+
+
+3) Data flow (key user journeys)
+--------------------------------
+
+A) App entry (not logged in)
+  - Landing page shown first
+  - User clicks "Sign In / Start Free" → Auth screen
+
+B) Sign-in / Sign-up
+  - Client → Firebase Auth (email/password)
+  - On success:
+    - client receives firebaseUser (UID, displayName, photoURL)
+    - store starts Firestore realtime subscriptions for this UID
+
+C) Log an action (required photo + AI verify + save)
+  1. User selects photo in ActionForm
+  2. User clicks "Verify photo with AI"
+     - MobileNet classifies image in browser
+     - UI shows Verified/Invalid
+  3. On Save:
+     - Client uploads image to Cloudinary → gets secure_url
+     - Client writes action to Firestore:
+       actions/{actionId} = { userId, category, type, notes, co2, date, photoUrl, createdAt }
+     - Client updates users/{uid} aggregates (totalCo2, totalActions)
+  4. Firestore realtime listener pushes new action back to the client
+     - Dashboard, streak, weekly chart, share stats update instantly
+
+D) Delete an action
+  - Client requests delete actionId
+  - Firestore transaction:
+    - delete actions/{actionId}
+    - decrement users/{uid} aggregates
+  - Realtime listener updates the UI across all sections
+
+E) Leaderboard
+  - Derived from users collection aggregated totals (orderBy totalCo2 desc)
+  - Display name + optional photoUrl shown in leaderboard UI
+
+
+4) Security and separation of user data
+---------------------------------------
+  - Each action stores userId = Firebase Auth UID
+  - UI queries actions where userId == current UID
+  - User profile totals stored in users/{uid}
+  - (Recommended) Firestore security rules should enforce:
+    - a user can read/write only their own actions and profile
+    - public reads for challenges/tips are allowed (if desired)
+
+
+5) Deployment notes (typical)
+-----------------------------
+  - Frontend can be deployed to any static host (Firebase Hosting, Vercel, Netlify)
+  - Firebase project hosts Auth + Firestore
+  - Cloudinary account hosts images and serves via CDN
+

@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAppStore } from '../store/useAppStore';
+import SustainabilityImageVerifier from './SustainabilityImageVerifier';
 
 const ACTION_TYPES = {
   transport: [
@@ -49,6 +50,7 @@ export default function ActionForm({ onSuccess, onCancel }) {
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [verificationStatus, setVerificationStatus] = useState('idle');
 
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm({
     resolver: zodResolver(schema),
@@ -65,9 +67,23 @@ export default function ActionForm({ onSuccess, onCancel }) {
     if (!file) return;
     setPhotoFile(file);
     setPhotoPreview(URL.createObjectURL(file));
+    setVerificationStatus('idle');
   };
 
   const onSubmit = async (data) => {
+    if (!photoFile) {
+      // Make photo mandatory for logging an action
+      // eslint-disable-next-line no-alert
+      alert('Please upload a photo for this action before saving.');
+      return;
+    }
+    // If there is a photo, require it to be verified before saving
+    if (photoFile && verificationStatus !== 'verified') {
+      // Simple guard; you could show a nicer UI message if needed
+      // eslint-disable-next-line no-alert
+      alert('Please verify the photo with AI before saving your action.');
+      return;
+    }
     const co2 = selectedType?.co2 ?? 0.5;
     setUploading(true);
     try {
@@ -139,7 +155,7 @@ export default function ActionForm({ onSuccess, onCancel }) {
       </div>
 
       <div className="form-group">
-        <label className="form-label">Photo (optional)</label>
+        <label className="form-label">Photo *</label>
         <div
           className="photo-drop"
           onClick={() => document.getElementById('actionPhotoInput')?.click()}
@@ -163,6 +179,10 @@ export default function ActionForm({ onSuccess, onCancel }) {
             />
           </div>
         )}
+        <SustainabilityImageVerifier
+          file={photoFile}
+          onStatusChange={setVerificationStatus}
+        />
       </div>
 
       <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
@@ -172,7 +192,11 @@ export default function ActionForm({ onSuccess, onCancel }) {
         <button
           type="submit"
           className="btn btn-primary"
-          disabled={isSubmitting || uploading}
+          disabled={
+            isSubmitting ||
+            uploading ||
+            (photoFile && verificationStatus === 'verifying')
+          }
         >
           {isSubmitting || uploading ? 'Saving…' : 'Save Action ✓'}
         </button>

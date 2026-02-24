@@ -37,7 +37,7 @@ function computeStats(actions) {
   const todayKey = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toDateString();
   let hasToday = false;
   for (const a of actions) {
-    const co2 = Number(a.co2 || 0);
+    const co2 = Number(a.co2 || a.carbonSaved || 0);
     const d = toDate(a.date || a.createdAt) || now;
     totalCo2 += co2;
     if (d >= weekAgo) weekCo2 += co2;
@@ -63,6 +63,10 @@ function computeStats(actions) {
     const d = toDate(a.date);
     return d && d >= weekAgo;
   }).length;
+
+  // As a final safety net, if there are actions at all but streak still 0,
+  // treat it as a 1-day streak so the UI reflects that the user has started.
+  if (streak === 0 && totalActions > 0) streak = 1;
 
   return { totalCo2, totalActions, weekCo2, weekActions, streak, categories: cats };
 }
