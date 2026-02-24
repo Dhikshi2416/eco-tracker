@@ -79,56 +79,102 @@ export default function ActionForm({ onSuccess, onCancel }) {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
+    <form onSubmit={handleSubmit(onSubmit)} className="form">
       <div className="form-row">
         <div className="form-group">
-          <label>Category *</label>
-          <select {...register('category')}>
+          <label className="form-label">Category *</label>
+          <select className="form-control" {...register('category')}>
             <option value="">Select category...</option>
-            {['transport','food','energy','waste','water'].map(c => (
-              <option key={c} value={c}>{c.charAt(0).toUpperCase()+c.slice(1)}</option>
+            <option value="transport">🚗 Transport</option>
+            <option value="food">🥗 Food</option>
+            <option value="energy">⚡ Energy</option>
+            <option value="waste">♻️ Waste</option>
+            <option value="water">💧 Water</option>
+          </select>
+          {errors.category && (
+            <span style={{ color: 'var(--danger)', fontSize: 12 }}>{errors.category.message}</span>
+          )}
+        </div>
+        <div className="form-group">
+          <label className="form-label">Action Type *</label>
+          <select className="form-control" {...register('type')} disabled={!category}>
+            <option value="">{category ? 'Select action...' : 'Select category first...'}</option>
+            {types.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
             ))}
           </select>
-          {errors.category && <span className="error">{errors.category.message}</span>}
-        </div>
-        <div className="form-group">
-          <label>Action Type *</label>
-          <select {...register('type')} disabled={!category}>
-            <option value="">Select action...</option>
-            {types.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-          {errors.type && <span className="error">{errors.type.message}</span>}
+          {errors.type && (
+            <span style={{ color: 'var(--danger)', fontSize: 12 }}>{errors.type.message}</span>
+          )}
         </div>
       </div>
 
-      {selectedType && (
-        <div className="co2-preview">
-          🌿 Carbon saved: <strong>{selectedType.co2} kg CO₂</strong>
-        </div>
-      )}
-
       <div className="form-group">
-        <label>Notes</label>
-        <textarea {...register('description')} placeholder="Any additional context..." rows={3} />
+        <label className="form-label">Notes (optional)</label>
+        <textarea
+          className="form-control"
+          {...register('description')}
+          placeholder="Describe what you did, any context..."
+        />
       </div>
 
       <div className="form-row">
         <div className="form-group">
-          <label>Date *</label>
-          <input type="date" {...register('date')} />
+          <label className="form-label">Date</label>
+          <input type="date" className="form-control" {...register('date')} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Carbon Saved (kg CO₂)</label>
+          <input
+            type="number"
+            className="form-control"
+            value={selectedType?.co2 ?? ''}
+            placeholder="Auto-calculated"
+            readOnly
+            style={{ opacity: 0.7 }}
+          />
         </div>
       </div>
 
       <div className="form-group">
-        <label>Photo (optional)</label>
-        <input type="file" accept="image/*" onChange={handlePhotoChange} />
-        {photoPreview && <img src={photoPreview} alt="Preview" style={{ width: 80, height: 80, borderRadius: 8, objectFit: 'cover', marginTop: 8 }} />}
+        <label className="form-label">Photo (optional)</label>
+        <div
+          className="photo-drop"
+          onClick={() => document.getElementById('actionPhotoInput')?.click()}
+        >
+          <div className="drop-icon">📷</div>
+          <div className="drop-text">Click to upload or drag &amp; drop</div>
+          <div className="drop-hint">JPG, PNG up to 10MB</div>
+          <input
+            id="actionPhotoInput"
+            type="file"
+            accept="image/*"
+            onChange={handlePhotoChange}
+          />
+        </div>
+        {photoPreview && (
+          <div className="photo-preview">
+            <img
+              src={photoPreview}
+              alt="Preview"
+              className="photo-thumb"
+            />
+          </div>
+        )}
       </div>
 
-      <div className="form-actions">
-        <button type="button" onClick={onCancel}>Cancel</button>
-        <button type="submit" disabled={isSubmitting || uploading}>
-          {isSubmitting ? 'Saving...' : 'Save Action ✓'}
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="btn btn-primary"
+          disabled={isSubmitting || uploading}
+        >
+          {isSubmitting || uploading ? 'Saving…' : 'Save Action ✓'}
         </button>
       </div>
     </form>
