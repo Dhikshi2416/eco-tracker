@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAppStore } from '../store/useAppStore';
-import { photosAPI } from '../api';
 
 const ACTION_TYPES = {
   transport: [
@@ -69,15 +68,14 @@ export default function ActionForm({ onSuccess, onCancel }) {
   };
 
   const onSubmit = async (data) => {
-    let photoId;
-    if (photoFile) {
-      setUploading(true);
-      try { const photo = await photosAPI.upload(photoFile); photoId = photo.id; }
-      catch (e) { console.warn('Photo upload failed:', e); }
-      finally { setUploading(false); }
+    const co2 = selectedType?.co2 ?? 0.5;
+    setUploading(true);
+    try {
+      await addAction({ ...data, co2 }, photoFile);
+      onSuccess?.();
+    } finally {
+      setUploading(false);
     }
-    await addAction({ ...data, photoId });
-    onSuccess?.();
   };
 
   return (

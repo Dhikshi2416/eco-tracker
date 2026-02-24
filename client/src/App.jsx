@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import './index.css';
 import { useAppStore } from './store/useAppStore';
-import { authAPI, tipsAPI } from './api';
 import ActionForm from './components/ActionForm';
+import { auth } from './lib/firebase';
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+} from 'firebase/auth';
 
 const CAT_ICONS = {
   transport: '🚗',
@@ -12,46 +19,7 @@ const CAT_ICONS = {
   water: '💧',
 };
 
-function useAuth() {
-  const setUser = useAppStore((s) => s.setUser);
-  const [user, setLocalUser] = useState(null);
-
-  useEffect(() => {
-    const token = localStorage.getItem('eco_token');
-    const rawUser = localStorage.getItem('eco_user');
-    if (token && rawUser) {
-      try {
-        const parsed = JSON.parse(rawUser);
-        setLocalUser(parsed);
-        setUser(parsed);
-      } catch {
-        localStorage.removeItem('eco_user');
-      }
-    }
-  }, [setUser]);
-
-  const login = async (mode, data) => {
-    const fn = mode === 'login' ? authAPI.login : authAPI.register;
-    const res = await fn(data);
-    localStorage.setItem('eco_token', res.token);
-    localStorage.setItem('eco_user', JSON.stringify(res.user));
-    setUser(res.user);
-    setLocalUser(res.user);
-    return res.user;
-  };
-
-  const logout = () => {
-    localStorage.removeItem('eco_token');
-    localStorage.removeItem('eco_user');
-    setUser(null);
-    setLocalUser(null);
-  };
-
-  return { user, login, logout };
-}
-
 function AuthScreen({ onAuthenticated }) {
-  const { login } = useAuth();
   const [mode, setMode] = useState('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -64,11 +32,13 @@ function AuthScreen({ onAuthenticated }) {
     setError('');
     setLoading(true);
     try {
-      const user =
-        mode === 'login'
-          ? await login('login', { email, password })
-          : await login('register', { name: name || 'Eco User', email, password });
-      onAuthenticated(user);
+      if (mode === 'register') {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(cred.user, { displayName: name || 'Eco User' });
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+      onAuthenticated?.();
     } catch (err) {
       setError(typeof err === 'string' ? err : 'Authentication failed');
     } finally {
@@ -77,8 +47,29 @@ function AuthScreen({ onAuthenticated }) {
   };
 
   return (
-    <div className="auth-screen" style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
-      <div className="auth-card">
+    <div
+      className="auth-screen"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'radial-gradient(circle at top, #183222 0, #0d1a0f 55%)',
+      }}
+    >
+      <div
+        className="auth-card"
+        style={{
+          width: 420,
+          maxWidth: '90vw',
+          padding: 40,
+          borderRadius: 24,
+          background: 'var(--card)',
+          border: '1px solid var(--border)',
+          boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
+        }}
+      >
         <div className="auth-logo" style={{ textAlign: 'center', marginBottom: 32 }}>
           <span className="logo-mark" style={{ fontSize: 32, display: 'block', marginBottom: 4 }}>
             🌿 EcoTrack
@@ -232,6 +223,71 @@ function Dashboard({ user, stats, actions, leaderboard, onShowLog }) {
   const firstName = user?.name?.split(' ')[0] || 'Friend';
   const myRank = leaderboard?.myRank ?? null;
 
+  const weeklySeries = useMemo(() => {
+    const out = [];
+    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const now = new Date();
+    // Build last 7 days ending today
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const dayKey = d.toDateString();
+      const total = (actions || [])
+        .filter((a) => {
+          const ad = new Date(a.date || a.createdAt || now);
+          ad.setHours(0, 0, 0, 0);
+          return ad.toDateString() === dayKey;
+        })
+        .reduce((s, a) => s + Number(a.co2 || a.carbonSaved || 0), 0);
+      out.push({ label: labels[6 - i], value: total });
+    }
+    return out;
+  }, [actions]);
+
+  const donutData = useMemo(() => {
+    const cats = stats?.categories || {};
+    const order = ['transport', 'food', 'energy', 'waste', 'water'];
+    const colors = {
+      transport: '#6ab0ff',
+      food: '#5dde7f',
+      energy: '#f0c040',
+      waste: '#b478dc',
+      water: '#40c0f0',
+    };
+    const circumference = 289; // matches original design for r=46
+    const total = order.reduce((s, key) => s + Number(cats[key] || 0), 0);
+    if (!total) {
+      return order.map((key) => ({
+        key,
+        label: key.charAt(0).toUpperCase() + key.slice(1),
+        value: 0,
+        pct: 0,
+        dash: 0,
+        offset: 0,
+        color: colors[key],
+      }));
+    }
+    let offset = 0;
+    return order.map((key) => {
+      const value = Number(cats[key] || 0);
+      const pct = value / total;
+      const dash = pct * circumference;
+      const seg = {
+        key,
+        label: key.charAt(0).toUpperCase() + key.slice(1),
+        value,
+        pct: Math.round(pct * 100),
+        dash,
+        offset,
+        color: colors[key],
+        circumference,
+      };
+      offset += dash;
+      return seg;
+    });
+  }, [stats]);
+
   return (
     <div className="page active">
       <div className="section-header">
@@ -246,7 +302,99 @@ function Dashboard({ user, stats, actions, leaderboard, onShowLog }) {
         </span>
       </div>
 
+      {/* Top stat row */}
       <StatCards stats={stats} rank={myRank} />
+
+      {/* Weekly + Impact by Category */}
+      <div className="grid-2" style={{ marginBottom: 20 }}>
+        <div className="card">
+          <div className="card-title">
+            📈 Weekly CO₂ Saved
+            <span className="tag tag-green text-xs" style={{ marginLeft: 'auto' }}>
+              {stats?.weekCo2?.toFixed ? stats.weekCo2.toFixed(1) : '0.0'} kg this week
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 120 }}>
+            {weeklySeries.map((d) => {
+              const max = Math.max(...weeklySeries.map((x) => x.value || 0), 1);
+              const h = (d.value / max) * 100;
+              return (
+                <div key={d.label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                  <div
+                    className="chart-bar"
+                    style={{
+                      width: '100%',
+                      borderRadius: 6,
+                      background: d.value > 0 ? 'linear-gradient(180deg,var(--accent2),var(--accent3))' : 'var(--bg3)',
+                      height: `${h}%`,
+                      position: 'relative',
+                    }}
+                    title={`${d.value.toFixed(1)} kg`}
+                  >
+                    {d.value > 0 && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: -18,
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          fontSize: 10,
+                          color: 'var(--text3)',
+                          fontFamily: 'var(--font-mono)',
+                        }}
+                      >
+                        {d.value.toFixed(1)}
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>{d.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-title">🌍 Impact by Category</div>
+          <div className="donut-wrap">
+            <div className="donut">
+              <svg width="120" height="120" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="46" fill="none" stroke="var(--bg3)" strokeWidth="16" />
+                {donutData.map((seg) => (
+                  <circle
+                    key={seg.key}
+                    cx="60"
+                    cy="60"
+                    r="46"
+                    fill="none"
+                    stroke={seg.color}
+                    strokeWidth="16"
+                    strokeDasharray={`${seg.dash} ${seg.circumference - seg.dash}`}
+                    strokeDashoffset={-seg.offset}
+                    strokeLinecap="round"
+                  />
+                ))}
+              </svg>
+              <div className="donut-center">
+                <div className="donut-val">{(stats?.totalCo2 ?? 0).toFixed(1)}</div>
+                <div className="donut-unit">kg CO₂</div>
+              </div>
+            </div>
+            <div className="donut-legend">
+              {donutData.map((seg) => (
+                <div key={seg.key} className="legend-item">
+                  <div className="legend-dot" style={{ background: seg.color }} />
+                  <span className="text-sm">
+                    {seg.label}{' '}
+                    <span className="text-mono text-xs">
+                      {seg.pct}% · {seg.value.toFixed(1)} kg
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div className="grid-2" style={{ marginTop: 20 }}>
         <div className="card">
@@ -261,21 +409,45 @@ function Dashboard({ user, stats, actions, leaderboard, onShowLog }) {
         <div className="card">
           <div className="card-title">🏅 Streak Badges</div>
           <div className="action-feed">
-            {stats?.streak ? (
-              <div className="action-item">
-                <div className="action-cat">🔥</div>
-                <div className="action-info">
-                  <div className="action-name">{stats.streak} day streak</div>
-                  <div className="action-meta">Keep going! Every day counts.</div>
+            <div className="action-item">
+              <div className="action-cat">🔥</div>
+              <div className="action-info">
+                <div className="action-name">{stats?.streak ?? 0} day streak</div>
+                <div className="action-meta">{stats?.streak ? 'Keep going! Every day counts.' : 'Log an action today to start your streak.'}</div>
+              </div>
+            </div>
+          </div>
+          {/* Badge row */}
+          <div style={{ display: 'flex', gap: 10, marginTop: 16, overflowX: 'auto' }}>
+            {[
+              { days: 1, icon: '🌱', name: 'Sprout' },
+              { days: 3, icon: '🌿', name: 'Seedling' },
+              { days: 7, icon: '🍃', name: 'Sapling' },
+              { days: 14, icon: '🌳', name: 'Guardian' },
+              { days: 30, icon: '🌲', name: 'Champion' },
+            ].map((b) => {
+              const unlocked = (stats?.streak || 0) >= b.days;
+              return (
+                <div
+                  key={b.name}
+                  style={{
+                    minWidth: 90,
+                    padding: 12,
+                    borderRadius: 16,
+                    border: `1px solid ${unlocked ? 'var(--accent2)' : 'var(--border)'}`,
+                    background: unlocked ? 'rgba(93,222,127,0.06)' : 'var(--bg3)',
+                    textAlign: 'center',
+                    fontSize: 12,
+                  }}
+                >
+                  <div style={{ fontSize: 22, marginBottom: 6, opacity: unlocked ? 1 : 0.4 }}>{b.icon}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--text3)', marginBottom: 2 }}>{b.name}</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: unlocked ? 'var(--accent)' : 'var(--text3)' }}>
+                    {unlocked ? `${b.days}d` : `${b.days}d goal`}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="empty">
-                <div className="empty-icon">🌱</div>
-                <div className="empty-text">No streak yet</div>
-                <div className="empty-sub">Log an action today to start your streak</div>
-              </div>
-            )}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -504,6 +676,19 @@ function LeaderboardPage({ data, onChangePeriod }) {
 }
 
 function TipsPage({ tips }) {
+  const [index, setIndex] = useState(0);
+  const [filter, setFilter] = useState('all'); // visual category filter
+
+  const hasTips = Array.isArray(tips) && tips.length > 0;
+  const filteredTips = useMemo(() => {
+    if (!hasTips) return [];
+    if (filter === 'all') return tips;
+    return tips.filter((t) => String(t.category).toLowerCase() === filter);
+  }, [filter, tips, hasTips]);
+
+  const tipList = filteredTips.length ? filteredTips : tips || [];
+  const tip = tipList.length ? tipList[index % tipList.length] : null;
+
   return (
     <div className="page active">
       <div className="section-header">
@@ -511,9 +696,96 @@ function TipsPage({ tips }) {
           <div className="section-title">Eco Tips</div>
           <div className="section-sub">Practical advice to reduce your footprint</div>
         </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'transport', label: 'Transport' },
+            { key: 'food', label: 'Food' },
+            { key: 'energy', label: 'Energy' },
+            { key: 'waste', label: 'Waste' },
+            { key: 'water', label: 'Water' },
+          ].map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{
+                borderRadius: 999,
+                borderColor: filter === opt.key ? 'var(--accent2)' : 'var(--border)',
+                background: filter === opt.key ? 'var(--card2)' : 'none',
+                color: filter === opt.key ? 'var(--accent)' : 'var(--text3)',
+              }}
+              onClick={() => {
+                setFilter(opt.key);
+                setIndex(0);
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid-2" style={{ marginBottom: 20 }}>
+        <div className="card">
+          <div className="card-title">💡 Tip of the Day</div>
+          {tip ? (
+            <>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>{tip.emoji}</div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text3)',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.8,
+                  fontFamily: 'var(--font-mono)',
+                  marginBottom: 8,
+                }}
+              >
+                {tip.category}
+              </div>
+              <div style={{ fontSize: 16, color: 'var(--text)', marginBottom: 8 }}>{tip.text}</div>
+              <div style={{ fontSize: 12, color: 'var(--accent)', fontFamily: 'var(--font-mono)', marginBottom: 8 }}>{tip.impact}</div>
+              {/* Visual impact bar */}
+              <div
+                style={{
+                  height: 8,
+                  borderRadius: 999,
+                  background: 'var(--bg3)',
+                  overflow: 'hidden',
+                  marginBottom: 8,
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    width: '70%',
+                    borderRadius: 999,
+                    background: 'linear-gradient(90deg,var(--accent2),var(--accent3))',
+                  }}
+                />
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginBottom: 16 }}>
+                Visual impact score (higher bar = higher impact)
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <button className="btn btn-ghost btn-sm" type="button" onClick={() => setIndex((i) => (i - 1 + tips.length) % tips.length)}>
+                  ← Prev
+                </button>
+                <button className="btn btn-ghost btn-sm" type="button" onClick={() => setIndex((i) => (i + 1) % tips.length)}>
+                  Next →
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="empty">
+              <div className="empty-icon">💡</div>
+              <div className="empty-text">No tips loaded</div>
+            </div>
+          )}
+        </div>
       </div>
       <div className="grid-2">
-        {tips?.length ? (
+        {hasTips &&
           tips.map((t) => (
             <div key={t.id} className="card">
               <div style={{ fontSize: 28, marginBottom: 10 }}>{t.emoji}</div>
@@ -521,15 +793,7 @@ function TipsPage({ tips }) {
               <div style={{ fontSize: 15, color: 'var(--text2)', marginBottom: 8 }}>{t.text}</div>
               <div style={{ fontSize: 12, color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>{t.impact}</div>
             </div>
-          ))
-        ) : (
-          <div className="card">
-            <div className="empty">
-              <div className="empty-icon">💡</div>
-              <div className="empty-text">No tips loaded</div>
-            </div>
-          </div>
-        )}
+          ))}
       </div>
     </div>
   );
@@ -563,6 +827,19 @@ function SharePage({ stats }) {
       } else {
         await share('clipboard');
       }
+    } else if (type === 'whatsapp') {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    } else if (type === 'twitter') {
+      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, '_blank');
+    } else if (type === 'linkedin') {
+      window.open(
+        `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent('https://ecotrack.app')}&mini=true&summary=${encodeURIComponent(
+          text,
+        )}`,
+        '_blank',
+      );
+    } else if (type === 'telegram') {
+      window.open(`https://t.me/share/url?url=${encodeURIComponent('https://ecotrack.app')}&text=${encodeURIComponent(text)}`, '_blank');
     }
   };
 
@@ -597,6 +874,18 @@ function SharePage({ stats }) {
             </button>
             <button className="btn btn-primary" type="button" onClick={() => share('native')}>
               📤 Share
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={() => share('whatsapp')}>
+              💬 WhatsApp
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={() => share('twitter')}>
+              𝕏 Twitter
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={() => share('linkedin')}>
+              💼 LinkedIn
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={() => share('telegram')}>
+              📨 Telegram
             </button>
           </div>
         </div>
@@ -662,39 +951,17 @@ function ProfilePage({ user, stats, onLogout }) {
 function AppShell({ user }) {
   const [page, setPage] = useState('dashboard');
   const [actionModalOpen, setActionModalOpen] = useState(false);
-  const [tips, setTips] = useState([]);
   const stats = useAppStore((s) => s.stats);
   const actions = useAppStore((s) => s.actions);
   const challenges = useAppStore((s) => s.challenges);
   const leaderboard = useAppStore((s) => s.leaderboard);
-  const fetchStats = useAppStore((s) => s.fetchStats);
-  const fetchActions = useAppStore((s) => s.fetchActions);
   const addAction = useAppStore((s) => s.addAction);
   const removeAction = useAppStore((s) => s.removeAction);
-  const fetchChallenges = useAppStore((s) => s.fetchChallenges);
   const joinChallenge = useAppStore((s) => s.joinChallenge);
-  const fetchLeaderboard = useAppStore((s) => s.fetchLeaderboard);
-
-  const { logout } = useAuth();
-
-  useEffect(() => {
-    fetchStats();
-    fetchActions();
-    fetchChallenges();
-    fetchLeaderboard('weekly');
-    tipsAPI
-      .list()
-      .then(setTips)
-      .catch(() => {});
-  }, [fetchStats, fetchActions, fetchChallenges, fetchLeaderboard]);
+  const progressChallenge = useAppStore((s) => s.progressChallenge);
+  const tips = useAppStore((s) => s.tips);
 
   const handleNewAction = () => setActionModalOpen(true);
-
-  const handleSubmitAction = async (data) => {
-    await addAction(data);
-    await Promise.all([fetchStats(), fetchActions(), fetchChallenges(), fetchLeaderboard('weekly')]);
-    setActionModalOpen(false);
-  };
 
   const initials =
     user?.name
@@ -777,11 +1044,11 @@ function AppShell({ user }) {
           <div className="content">
             {page === 'dashboard' && <Dashboard user={user} stats={stats} actions={actions} leaderboard={leaderboard} onShowLog={() => setPage('log')} />}
             {page === 'log' && <ActionLogPage actions={actions} onNew={handleNewAction} onDelete={removeAction} />}
-            {page === 'challenges' && <ChallengesPage challenges={challenges} onJoin={joinChallenge} onProgress={(id) => useAppStore.getState().challengesAPI?.progress?.(id)} />}
-            {page === 'leaderboard' && <LeaderboardPage data={leaderboard} onChangePeriod={fetchLeaderboard} />}
+            {page === 'challenges' && <ChallengesPage challenges={challenges} onJoin={joinChallenge} onProgress={progressChallenge} />}
+            {page === 'leaderboard' && <LeaderboardPage data={leaderboard} onChangePeriod={() => {}} />}
             {page === 'tips' && <TipsPage tips={tips} />}
             {page === 'share' && <SharePage stats={stats} />}
-            {page === 'profile' && <ProfilePage user={user} stats={stats} onLogout={logout} />}
+            {page === 'profile' && <ProfilePage user={user} stats={stats} onLogout={() => signOut(auth)} />}
           </div>
         </main>
       </div>
@@ -797,11 +1064,8 @@ function AppShell({ user }) {
             <ActionForm
               onCancel={() => setActionModalOpen(false)}
               onSuccess={() => {
-                fetchStats();
-                fetchActions();
                 setActionModalOpen(false);
               }}
-              onSubmitOverride={handleSubmitAction}
             />
           </div>
         </div>
@@ -811,16 +1075,32 @@ function AppShell({ user }) {
 }
 
 export default function App() {
-  const { user } = useAuth();
-  const [readyUser, setReadyUser] = useState(user);
+  const setUser = useAppStore((s) => s.setUser);
+  const startRealtime = useAppStore((s) => s.startRealtime);
+  const stopRealtime = useAppStore((s) => s.stopRealtime);
+
+  const [readyUser, setReadyUser] = useState(null);
 
   useEffect(() => {
-    setReadyUser(user);
-  }, [user]);
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setReadyUser(null);
+        setUser(null);
+        stopRealtime();
+        return;
+      }
+      const u = {
+        id: fbUser.uid,
+        name: fbUser.displayName || 'Eco User',
+        email: fbUser.email || '',
+      };
+      setReadyUser(u);
+      setUser(u);
+      await startRealtime();
+    });
+    return () => unsub();
+  }, [setUser, startRealtime, stopRealtime]);
 
-  if (!readyUser) {
-    return <AuthScreen onAuthenticated={setReadyUser} />;
-  }
-
+  if (!readyUser) return <AuthScreen onAuthenticated={() => {}} />;
   return <AppShell user={readyUser} />;
 }
