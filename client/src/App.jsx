@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import './index.css';
 import { useAppStore } from './store/useAppStore';
 import ActionForm from './components/ActionForm';
-import { auth } from './lib/firebase';
+import { auth, db } from './lib/firebase';
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -10,6 +10,7 @@ import {
   signOut,
   updateProfile,
 } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 
 const CAT_ICONS = {
   transport: '🚗',
@@ -61,6 +62,551 @@ function getActionLabel(category, type) {
   return (
     ACTION_TYPES?.[category]?.[type]?.label ||
     (typeof type === 'string' ? type.replace(/_/g, ' ') : 'Action')
+  );
+}
+
+function toDateSafe(v) {
+  if (!v) return null;
+  if (v instanceof Date) return v;
+  if (typeof v?.toDate === 'function') return v.toDate();
+  return new Date(v);
+}
+
+function LandingScreen({ onStartAuth }) {
+  const scrollTo = (id) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Navbar scroll effect, scroll-reveal, and floating leaves animation
+  useEffect(() => {
+    const nav = document.getElementById('landingNavbar');
+    const onScroll = () => {
+      if (!nav) return;
+      nav.classList.toggle('scrolled', window.scrollY > 40);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    const items = document.querySelectorAll('.landing-reveal');
+    if (!items.length) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            e.target.classList.add('visible');
+            observer.unobserve(e.target);
+          }
+        });
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -40px 0px' },
+    );
+    items.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const canvas = document.getElementById('leaves-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const EMOJIS = ['🍃', '🌿', '🍀', '🌱', '🌾'];
+    let leaves = [];
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener('resize', resize, { passive: true });
+
+    function spawnLeaf() {
+      leaves.push({
+        x: Math.random() * canvas.width,
+        y: canvas.height + 20,
+        emoji: EMOJIS[Math.floor(Math.random() * EMOJIS.length)],
+        size: 12 + Math.random() * 16,
+        speed: 0.4 + Math.random() * 0.7,
+        drift: (Math.random() - 0.5) * 0.6,
+        rot: Math.random() * Math.PI * 2,
+        rotV: (Math.random() - 0.5) * 0.04,
+        life: 1,
+        decay: 0.0018 + Math.random() * 0.0015,
+      });
+    }
+
+    let frame = 0;
+    let rafId;
+    const tick = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      frame += 1;
+      if (frame % 90 === 0 && leaves.length < 22) spawnLeaf();
+      leaves = leaves.filter((l) => l.life > 0);
+      leaves.forEach((l) => {
+        l.y -= l.speed;
+        l.x += l.drift + Math.sin(l.y * 0.015) * 0.4;
+        l.rot += l.rotV;
+        l.life -= l.decay;
+
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, l.life * 0.6);
+        ctx.translate(l.x, l.y);
+        ctx.rotate(l.rot);
+        ctx.font = `${l.size}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(l.emoji, 0, 0);
+        ctx.restore();
+      });
+      rafId = requestAnimationFrame(tick);
+    };
+
+    for (let i = 0; i < 8; i += 1) {
+      spawnLeaf();
+      leaves[i].y = Math.random() * canvas.height;
+      leaves[i].life = Math.random();
+    }
+    tick();
+
+    return () => {
+      window.removeEventListener('resize', resize);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  return (
+    <div className="landing-root">
+      <canvas id="leaves-canvas" />
+      <nav className="landing-navbar" id="landingNavbar">
+        <div className="landing-nav-logo">
+          <span className="landing-nav-logo-leaf">🌿</span>
+          EcoTrack
+        </div>
+        <div className="landing-nav-links">
+          <button
+            type="button"
+            className="landing-nav-link"
+            onClick={() => scrollTo('features')}
+          >
+            Features
+          </button>
+          <button
+            type="button"
+            className="landing-nav-link"
+            onClick={() => scrollTo('how')}
+          >
+            How It Works
+          </button>
+          <button
+            type="button"
+            className="landing-nav-link"
+            onClick={() => scrollTo('impact')}
+          >
+            Impact
+          </button>
+          <button
+            type="button"
+            className="landing-nav-link"
+            onClick={() => scrollTo('cta')}
+          >
+            Community
+          </button>
+        </div>
+        <div className="landing-nav-actions">
+          <button
+            type="button"
+            className="landing-btn-nav-ghost"
+            onClick={onStartAuth}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            className="landing-btn-nav-primary"
+            onClick={onStartAuth}
+          >
+            Start Free →
+          </button>
+        </div>
+      </nav>
+
+      <main>
+        <section className="landing-hero">
+          <div className="landing-hero-inner">
+            <div className="landing-hero-left">
+              <div className="landing-hero-badge">
+                <div className="landing-hero-badge-dot" />
+                New: Community Challenges + Weekly Leaderboard
+              </div>
+              <h1 className="landing-hero-headline">
+                Turn everyday
+                <br />
+                choices into
+                <br />
+                <span className="landing-hero-accent">real climate</span>
+                <br />
+                action
+              </h1>
+              <p className="landing-hero-sub">
+                EcoTrack helps you log eco-friendly habits, calculate your exact carbon impact,
+                build daily streaks, and compete on a global leaderboard — all in one beautifully
+                designed dashboard.
+              </p>
+              <div className="landing-hero-ctas">
+                <button
+                  type="button"
+                  className="landing-btn-hero-primary"
+                  onClick={onStartAuth}
+                >
+                  🌱 Start Tracking Free
+                </button>
+                <button
+                  type="button"
+                  className="landing-btn-hero-secondary"
+                  onClick={() => scrollTo('features')}
+                >
+                  See Features ↓
+                </button>
+              </div>
+              <div className="landing-hero-social">
+                <div className="landing-avatar-stack">
+                  <div className="landing-avatar" data-color="green">
+                    AK
+                  </div>
+                  <div className="landing-avatar" data-color="blue">
+                    MR
+                  </div>
+                  <div className="landing-avatar" data-color="gold">
+                    SL
+                  </div>
+                  <div className="landing-avatar" data-color="purple">
+                    JT
+                  </div>
+                  <div className="landing-avatar" data-color="teal">
+                    +
+                  </div>
+                </div>
+                <div className="landing-hero-social-text">
+                  <strong>2</strong> eco warriors already saving the planet 🌍
+                </div>
+              </div>
+            </div>
+
+            <div className="landing-hero-right">
+              <div className="landing-float-pill landing-float-streak">
+                🔥 <strong>14-day</strong>&nbsp;streak active
+              </div>
+              <div className="landing-float-pill landing-float-badge">
+                🌳 <strong>Sapling</strong>&nbsp;badge earned!
+              </div>
+              <div className="landing-float-pill landing-float-co2">
+                🌿 +<strong>2.4 kg</strong>&nbsp;CO₂ saved today
+              </div>
+
+              <div className="landing-dashboard-preview">
+                <div className="landing-preview-topbar">
+                  <div className="landing-preview-dots">
+                    <span className="r" />
+                    <span className="y" />
+                    <span className="g" />
+                  </div>
+                  <div className="landing-preview-title">ecotrack.app/dashboard</div>
+                </div>
+                <div className="landing-preview-body">
+                  <div className="landing-preview-stats">
+                    <div className="landing-preview-stat">
+                      <div className="val green">84.3</div>
+                      <div className="label">kg CO₂ Saved</div>
+                    </div>
+                    <div className="landing-preview-stat">
+                      <div className="val gold">🔥 14</div>
+                      <div className="label">Day Streak</div>
+                    </div>
+                    <div className="landing-preview-stat">
+                      <div className="val blue">127</div>
+                      <div className="label">Actions</div>
+                    </div>
+                  </div>
+                  <div className="landing-preview-chart">
+                    <div style={{ height: '30%' }} />
+                    <div className="lit" style={{ height: '55%' }} />
+                    <div style={{ height: '40%' }} />
+                    <div className="lit" style={{ height: '75%' }} />
+                    <div className="lit" style={{ height: '60%' }} />
+                    <div style={{ height: '45%' }} />
+                    <div className="lit" style={{ height: '90%' }} />
+                  </div>
+                  <div className="landing-preview-action">
+                    <div className="cat transport">🚲</div>
+                    <div className="text">
+                      <div className="name">Cycled to work</div>
+                      <div className="meta">transport · today</div>
+                    </div>
+                    <div className="co2">+1.6 kg</div>
+                  </div>
+                  <div className="landing-preview-action">
+                    <div className="cat food">🥗</div>
+                    <div className="text">
+                      <div className="name">Ate vegan meal</div>
+                      <div className="meta">food · today</div>
+                    </div>
+                    <div className="co2">+1.5 kg</div>
+                  </div>
+                  <div className="landing-preview-action">
+                    <div className="cat energy">☀️</div>
+                    <div className="text">
+                      <div className="name">Used solar energy</div>
+                      <div className="meta">energy · yesterday</div>
+                    </div>
+                    <div className="co2">+1.8 kg</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-section" id="features">
+          <div className="landing-section-header landing-reveal">
+            <div className="eyebrow">Everything You Need</div>
+            <h2 className="title">Built for real climate action</h2>
+            <p className="sub">
+              Every feature is designed to make sustainable living measurable, motivating, and social.
+            </p>
+          </div>
+          <div className="landing-features-grid">
+            <div className="card f1 landing-reveal">
+              <div className="icon">🧮</div>
+              <div className="title">Carbon Calculator</div>
+              <div className="desc">
+                Every action you log is automatically converted to exact kg of CO₂ saved using
+                science-backed emission factors across 25+ action types.
+              </div>
+              <div className="tag">25+ actions tracked</div>
+            </div>
+            <div className="card f2 landing-reveal">
+              <div className="icon">🔥</div>
+              <div className="title">Streak System &amp; Badges</div>
+              <div className="desc">
+                Build daily streaks and unlock 6 badge tiers — from Seed to Champion. Gamified
+                progression keeps you motivated every single day.
+              </div>
+              <div className="tag">6 badge tiers</div>
+            </div>
+            <div className="card f3 landing-reveal">
+              <div className="icon">🥇</div>
+              <div className="title">Weekly Leaderboard</div>
+              <div className="desc">
+                Compete globally with weekly, monthly, and all-time rankings. A beautiful podium
+                display shows the top eco warriors in your community.
+              </div>
+              <div className="tag">Global rankings</div>
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-section" id="how">
+          <div className="landing-section-header landing-reveal">
+            <div className="eyebrow">Simple as 1-2-3</div>
+            <h2 className="title">Start making a difference today</h2>
+            <p className="sub">
+              No complicated setup. Log your first action in under 30 seconds.
+            </p>
+          </div>
+          <div className="grid-3">
+            <div className="card landing-reveal">
+              <div style={{ fontSize: 32, marginBottom: 10 }}>📝</div>
+              <div className="section-title" style={{ fontSize: 16, marginBottom: 6 }}>
+                Log your actions
+              </div>
+              <p className="text-sm" style={{ color: 'var(--text3)' }}>
+                Pick a category, choose an action type, and add an optional photo or note. Your CO₂
+                impact is calculated instantly.
+              </p>
+            </div>
+            <div className="card landing-reveal">
+              <div style={{ fontSize: 32, marginBottom: 10 }}>🔥</div>
+              <div className="section-title" style={{ fontSize: 16, marginBottom: 6 }}>
+                Build your streak
+              </div>
+              <p className="text-sm" style={{ color: 'var(--text3)' }}>
+                Log at least one action daily to maintain your streak. Unlock badges as your streak
+                grows and climb the leaderboard.
+              </p>
+            </div>
+            <div className="card landing-reveal">
+              <div style={{ fontSize: 32, marginBottom: 10 }}>🌍</div>
+              <div className="section-title" style={{ fontSize: 16, marginBottom: 6 }}>
+                Share your impact
+              </div>
+              <p className="text-sm" style={{ color: 'var(--text3)' }}>
+                Your personalised impact card shows total CO₂ saved, streaks, and badges. Share it
+                and inspire others to join.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-section" id="impact">
+          <div className="landing-section-header landing-reveal">
+            <div className="eyebrow">Real Impact</div>
+            <h2 className="title">See your real numbers</h2>
+            <p className="sub">
+              Once you sign in, EcoTrack calculates your actual CO₂ savings, actions, and streaks
+              from your own log.
+            </p>
+          </div>
+          <div className="grid-4">
+            <div className="card landing-reveal">
+              <div style={{ fontSize: 34, marginBottom: 12 }}>🍃</div>
+              <div className="section-title" style={{ fontSize: 20, marginBottom: 4 }}>
+                Personal CO₂ saved
+              </div>
+              <div className="text-xs text-muted">
+                Dashboard shows the exact kilograms of CO₂ you&apos;ve saved from your actions.
+              </div>
+            </div>
+            <div className="card landing-reveal">
+              <div style={{ fontSize: 34, marginBottom: 12 }}>👥</div>
+              <div className="section-title" style={{ fontSize: 20, marginBottom: 4 }}>
+                Global leaderboard
+              </div>
+              <div className="text-xs text-muted">
+                Compare your impact with other EcoTrack users in real time.
+              </div>
+            </div>
+            <div className="card landing-reveal">
+              <div style={{ fontSize: 34, marginBottom: 12 }}>⚡</div>
+              <div className="section-title" style={{ fontSize: 20, marginBottom: 4 }}>
+                Actions logged
+              </div>
+              <div className="text-xs text-muted">
+                Track every ride, meal, and habit you log in the app.
+              </div>
+            </div>
+            <div className="card landing-reveal">
+              <div style={{ fontSize: 34, marginBottom: 12 }}>🔥</div>
+              <div className="section-title" style={{ fontSize: 20, marginBottom: 4 }}>
+                Live streaks &amp; badges
+              </div>
+              <div className="text-xs text-muted">
+                Your current streak and unlocked badges are pulled directly from your daily log.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-section" id="cta">
+          <div className="landing-section-header landing-reveal">
+            <div className="eyebrow">Community Love</div>
+            <h2 className="title">Built for real eco warriors</h2>
+            <p className="sub">
+              EcoTrack is open source and designed so you can see your own impact clearly and share
+              it with others.
+            </p>
+          </div>
+          <div className="grid-3">
+            <div className="card landing-reveal">
+              <div className="text-sm" style={{ color: 'var(--gold)', marginBottom: 8 }}>
+                Track your journey
+              </div>
+              <p className="text-sm" style={{ color: 'var(--text2)' }}>
+                Log actions daily and watch your personal CO₂ savings, streaks, and badges update
+                live inside the app.
+              </p>
+            </div>
+            <div className="card landing-reveal">
+              <div className="text-sm" style={{ color: 'var(--gold)', marginBottom: 8 }}>
+                Compete &amp; collaborate
+              </div>
+              <p className="text-sm" style={{ color: 'var(--text2)' }}>
+                Join challenges, climb the leaderboard, and invite friends or teammates to share the
+                experience.
+              </p>
+            </div>
+            <div className="card landing-reveal">
+              <div className="text-sm" style={{ color: 'var(--gold)', marginBottom: 8 }}>
+                Share your impact
+              </div>
+              <p className="text-sm" style={{ color: 'var(--text2)' }}>
+                Generate shareable impact cards directly from your real stats — no fake numbers,
+                just your actual progress.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-section cta" id="finalCta">
+          <div className="landing-cta-inner">
+            <div className="landing-cta-emoji">🌿</div>
+            <h2 className="landing-cta-headline">
+              The planet needs
+              <br />
+              your daily actions
+            </h2>
+            <p className="landing-cta-sub">
+              Join 2 eco warriors already making a measurable difference. Log your first action in
+              under 30 seconds — completely free, forever.
+            </p>
+            <div className="landing-cta-btns">
+              <button
+                type="button"
+                className="landing-btn-hero-primary"
+                onClick={onStartAuth}
+              >
+                🌱 Start Tracking Free
+              </button>
+              <button
+                type="button"
+                className="landing-btn-hero-secondary"
+                onClick={onStartAuth}
+              >
+                Sign In to Dashboard →
+              </button>
+            </div>
+            <div className="landing-cta-note">
+              ✓ Free forever · ✓ No credit card · ✓ Open source
+            </div>
+          </div>
+        </section>
+
+        <footer className="landing-footer">
+          <div className="landing-footer-inner">
+            <div>
+              <div className="logo">🌿 EcoTrack</div>
+              <div className="tagline">Turning daily choices into climate action</div>
+            </div>
+            <div className="links">
+              <button
+                type="button"
+                onClick={() => scrollTo('landingFeatures')}
+              >
+                Features
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollTo('landingImpact')}
+              >
+                Impact
+              </button>
+              <button type="button" onClick={onStartAuth}>
+                Launch App
+              </button>
+            </div>
+          </div>
+          <div className="landing-footer-bottom">
+            <span>© 2025 EcoTrack. All rights reserved.</span>
+            <span>
+              Made with <span className="heart">♥</span> for the planet
+            </span>
+          </div>
+        </footer>
+      </main>
+    </div>
   );
 }
 
@@ -242,7 +788,7 @@ function RecentActions({ actions }) {
           <div className="action-info">
             <div className="action-name">{getActionLabel(a.category, a.type)}</div>
             <div className="action-meta">
-              {a.category} · {new Date(a.date).toLocaleDateString()}
+              {a.category} · {(toDateSafe(a.date) || new Date()).toLocaleDateString()}
             </div>
           </div>
           <div>
@@ -268,13 +814,13 @@ function Dashboard({ user, stats, actions, leaderboard, onShowLog }) {
       d.setHours(0, 0, 0, 0);
       d.setDate(d.getDate() - i);
       const dayKey = d.toDateString();
-      const total = (actions || [])
-        .filter((a) => {
-          const ad = new Date(a.date || a.createdAt || now);
-          ad.setHours(0, 0, 0, 0);
-          return ad.toDateString() === dayKey;
-        })
-        .reduce((s, a) => s + Number(a.co2 || a.carbonSaved || 0), 0);
+      const total = (actions || []).reduce((s, a) => {
+        const ad = toDateSafe(a.date || a.createdAt);
+        if (!ad) return s;
+        const adDay = new Date(ad.getFullYear(), ad.getMonth(), ad.getDate());
+        if (adDay.toDateString() !== dayKey) return s;
+        return s + Number(a.co2 || a.carbonSaved || 0);
+      }, 0);
       out.push({ label: labels[6 - i], value: total });
     }
     return out;
@@ -491,16 +1037,22 @@ function ActionLogPage({ actions, onNew, onDelete }) {
     if (filterCat) list = list.filter((a) => a.category === filterCat);
     if (filterPeriod === 'week') {
       const w = new Date(Date.now() - 7 * 86400000);
-      list = list.filter((a) => new Date(a.date) >= w);
+      list = list.filter((a) => {
+        const d = toDateSafe(a.date);
+        return d && d >= w;
+      });
     } else if (filterPeriod === 'month') {
       const m = new Date(Date.now() - 30 * 86400000);
-      list = list.filter((a) => new Date(a.date) >= m);
+      list = list.filter((a) => {
+        const d = toDateSafe(a.date);
+        return d && d >= m;
+      });
     }
     list.sort((a, b) => new Date(b.date) - new Date(a.date));
     return list;
   }, [actions, filterCat, filterPeriod]);
 
-  const hasAny = (actions || []).length > 0;
+    const hasAny = (actions || []).length > 0;
   const showEmpty = !filtered.length;
 
   return (
@@ -560,10 +1112,17 @@ function ActionLogPage({ actions, onNew, onDelete }) {
                 <div className="action-info">
                   <div className="action-name">{getActionLabel(a.category, a.type)}</div>
                   <div className="action-meta">
-                    {a.category} · {new Date(a.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    {a.category} ·{' '}
+                    {(toDateSafe(a.date) || new Date()).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
                   </div>
-                  {a.description && (
-                    <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>{a.description}</div>
+                  {(a.description || a.notes) && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>
+                      {a.description || a.notes}
+                    </div>
                   )}
                 </div>
                 <div style={{ textAlign: 'right' }}>
@@ -571,9 +1130,16 @@ function ActionLogPage({ actions, onNew, onDelete }) {
                   <button
                     type="button"
                     onClick={() => onDelete(a.id)}
-                    style={{ background: 'none', border: 'none', color: 'var(--text3)', fontSize: 12, cursor: 'pointer', marginTop: 4 }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text3)',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      marginTop: 4,
+                    }}
                   >
-                    ✕
+                    🗑 Delete
                   </button>
                 </div>
               </div>
@@ -688,7 +1254,9 @@ function LeaderboardPage({ data, onChangePeriod }) {
         <div className="card-title">🥇 Top 3 Champions</div>
         <div className="podium">
           {(() => {
-            const sorted = [...leaderboard].sort((a, b) => (b.carbonSaved || 0) - (a.carbonSaved || 0));
+            const sorted = [...leaderboard].sort(
+              (a, b) => (b.carbonSaved || 0) - (a.carbonSaved || 0),
+            );
             const top3 = sorted.slice(0, 3);
             const order = [1, 0, 2];
             const podiumClass = ['p2', 'p1', 'p3'];
@@ -697,7 +1265,10 @@ function LeaderboardPage({ data, onChangePeriod }) {
             return order.map((idx, pi) => {
               const p = top3[idx];
               if (!p) return null;
-              const nm = p.user?.name || 'User';
+              const nm =
+                p.user?.displayName || p.user?.name || p.user?.email || 'User';
+              const photo =
+                p.user?.photoUrl || p.user?.photoURL || p.user?.avatarUrl || null;
               const initials = nm
                 .split(' ')
                 .map((w) => w[0])
@@ -708,7 +1279,11 @@ function LeaderboardPage({ data, onChangePeriod }) {
               return (
                 <div key={p.user?.id || `${pi}`} className="podium-place">
                   <div className="podium-avatar" style={{ background: `${color}22`, color }}>
-                    {p.isMe ? '😊' : initials}
+                    {photo ? (
+                      <img src={photo} alt={nm} />
+                    ) : (
+                      <span>{p.isMe ? '😊' : initials}</span>
+                    )}
                     <div className="podium-crown">{crowns[pi]}</div>
                   </div>
                   <div className="podium-name">{nm.split(' ')[0]}</div>
@@ -724,7 +1299,10 @@ function LeaderboardPage({ data, onChangePeriod }) {
         <div className="card-title">📋 Full Rankings</div>
         <div className="lb-table">
           {leaderboard.map((row) => {
-            const nm = row.user?.name || 'User';
+            const nm =
+              row.user?.displayName || row.user?.name || row.user?.email || 'User';
+            const photo =
+              row.user?.photoUrl || row.user?.photoURL || row.user?.avatarUrl || null;
             const initials = nm
               .split(' ')
               .map((w) => w[0])
@@ -736,8 +1314,19 @@ function LeaderboardPage({ data, onChangePeriod }) {
             return (
               <div key={row.user?.id} className={`lb-row ${row.isMe ? 'me' : ''}`}>
                 <div className="lb-rank">{rank >= 1 && rank <= 3 ? medals[rank - 1] : rank || '–'}</div>
-                <div className="lb-avatar" style={{ background: 'rgba(93,222,127,0.08)', color: 'var(--accent)' }}>
-                  {row.isMe ? '😊' : initials}
+                <div
+                  className="lb-avatar"
+                  style={{
+                    background: 'rgba(93,222,127,0.08)',
+                    color: 'var(--accent)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {photo ? (
+                    <img src={photo} alt={nm} />
+                  ) : (
+                    <span>{row.isMe ? '😊' : initials}</span>
+                  )}
                 </div>
                 <div className="lb-name">
                   {nm}
@@ -979,13 +1568,39 @@ function ProfilePage({ user, stats, onLogout }) {
       .toUpperCase() || 'A';
 
   const [editName, setEditName] = useState(user?.name || '');
-  useEffect(() => setEditName(user?.name || ''), [user?.name]);
+  const [editPhoto, setEditPhoto] = useState(user?.photoUrl || '');
+  const setUserStore = useAppStore((s) => s.setUser);
+
+  useEffect(() => {
+    setEditName(user?.name || '');
+    setEditPhoto(user?.photoUrl || '');
+  }, [user?.name, user?.photoUrl]);
 
   const saveProfile = async () => {
     const name = String(editName || '').trim();
+    const photo = String(editPhoto || '').trim();
     if (!name) return;
     try {
-      if (auth.currentUser) await updateProfile(auth.currentUser, { displayName: name });
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, {
+          displayName: name,
+          photoURL: photo || null,
+        });
+        await setDoc(
+          doc(db, 'users', auth.currentUser.uid),
+          {
+            displayName: name,
+            email: auth.currentUser.email || '',
+            photoUrl: photo || null,
+          },
+          { merge: true },
+        );
+      }
+      setUserStore({
+        ...(user || {}),
+        name,
+        photoUrl: photo || null,
+      });
     } catch {
       // ignore
     }
@@ -1007,7 +1622,15 @@ function ProfilePage({ user, stats, onLogout }) {
           <div className="card-title">👤 Personal Info</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
             <div className="avatar" style={{ width: 64, height: 64, fontSize: 24 }} id="profileAvatar">
-              {initials}
+              {user?.photoUrl ? (
+                <img
+                  src={user.photoUrl}
+                  alt={user.name || 'Profile'}
+                  style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+                />
+              ) : (
+                initials
+              )}
             </div>
             <div>
               <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-display)' }} id="profileName">
@@ -1022,6 +1645,15 @@ function ProfilePage({ user, stats, onLogout }) {
           <div className="form-group mb-16">
             <label className="form-label">Display Name</label>
             <input className="form-control" value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Your name" />
+          </div>
+          <div className="form-group mb-16">
+            <label className="form-label">Profile Photo URL</label>
+            <input
+              className="form-control"
+              value={editPhoto}
+              onChange={(e) => setEditPhoto(e.target.value)}
+              placeholder="Paste an image URL (e.g. from Cloudinary)"
+            />
           </div>
           <button className="btn btn-primary btn-sm" type="button" onClick={saveProfile}>
             Save Changes
@@ -1066,9 +1698,14 @@ function ProfilePage({ user, stats, onLogout }) {
   );
 }
 
-function AppShell({ user }) {
+function AppShell({ user, onLogout }) {
   const [page, setPage] = useState('dashboard');
   const [actionModalOpen, setActionModalOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [a11yOpen, setA11yOpen] = useState(false);
+  const [highContrast, setHighContrast] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [fontSize, setFontSize] = useState('default');
   const stats = useAppStore((s) => s.stats);
   const actions = useAppStore((s) => s.actions);
   const challenges = useAppStore((s) => s.challenges);
@@ -1079,7 +1716,32 @@ function AppShell({ user }) {
   const progressChallenge = useAppStore((s) => s.progressChallenge);
   const tips = useAppStore((s) => s.tips);
 
+  // Apply visual preferences to the document
+  useEffect(() => {
+    const body = document.body;
+    if (!body) return;
+    body.classList.toggle('hc', highContrast);
+  }, [highContrast]);
+
+  useEffect(() => {
+    const body = document.body;
+    if (!body) return;
+    body.classList.toggle('no-motion', reduceMotion);
+  }, [reduceMotion]);
+
+  useEffect(() => {
+    const body = document.body;
+    if (!body) return;
+    body.classList.remove('small-text', 'large-text');
+    if (fontSize === 'small') body.classList.add('small-text');
+    if (fontSize === 'large') body.classList.add('large-text');
+  }, [fontSize]);
+
   const handleNewAction = () => setActionModalOpen(true);
+  const navTo = (next) => {
+    setPage(next);
+    setSidebarOpen(false);
+  };
 
   const initials =
     user?.name
@@ -1091,42 +1753,63 @@ function AppShell({ user }) {
   return (
     <>
       <div className="app">
-        <aside className="sidebar" id="sidebar">
+        {sidebarOpen ? (
+          <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
+        ) : null}
+        <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="sidebar">
           <div className="sidebar-logo">
             <div className="logo-mark">🌿 EcoTrack</div>
             <div className="logo-sub">Sustainability Tracker</div>
           </div>
           <nav className="nav">
-            <button className={`nav-item ${page === 'dashboard' ? 'active' : ''}`} type="button" onClick={() => setPage('dashboard')}>
+            <button className={`nav-item ${page === 'dashboard' ? 'active' : ''}`} type="button" onClick={() => navTo('dashboard')}>
               <span className="nav-icon">📊</span> Dashboard
             </button>
-            <button className={`nav-item ${page === 'log' ? 'active' : ''}`} type="button" onClick={() => setPage('log')}>
+            <button className={`nav-item ${page === 'log' ? 'active' : ''}`} type="button" onClick={() => navTo('log')}>
               <span className="nav-icon">✏️</span> Action Log
             </button>
-            <button className={`nav-item ${page === 'challenges' ? 'active' : ''}`} type="button" onClick={() => setPage('challenges')}>
+            <button className={`nav-item ${page === 'challenges' ? 'active' : ''}`} type="button" onClick={() => navTo('challenges')}>
               <span className="nav-icon">🏆</span> Challenges
             </button>
-            <button className={`nav-item ${page === 'leaderboard' ? 'active' : ''}`} type="button" onClick={() => setPage('leaderboard')}>
+            <button className={`nav-item ${page === 'leaderboard' ? 'active' : ''}`} type="button" onClick={() => navTo('leaderboard')}>
               <span className="nav-icon">🥇</span> Leaderboard
             </button>
-            <button className={`nav-item ${page === 'tips' ? 'active' : ''}`} type="button" onClick={() => setPage('tips')}>
+            <button className={`nav-item ${page === 'tips' ? 'active' : ''}`} type="button" onClick={() => navTo('tips')}>
               <span className="nav-icon">💡</span> Eco Tips
             </button>
-            <button className={`nav-item ${page === 'share' ? 'active' : ''}`} type="button" onClick={() => setPage('share')}>
+            <button className={`nav-item ${page === 'share' ? 'active' : ''}`} type="button" onClick={() => navTo('share')}>
               <span className="nav-icon">📢</span> Share
             </button>
-            <button className={`nav-item ${page === 'profile' ? 'active' : ''}`} type="button" onClick={() => setPage('profile')}>
+            <button className={`nav-item ${page === 'profile' ? 'active' : ''}`} type="button" onClick={() => navTo('profile')}>
               <span className="nav-icon">👤</span> Profile
             </button>
           </nav>
           <div className="sidebar-footer">
             <div className="user-chip">
-              <div className="avatar">{initials}</div>
+              <div className="avatar">
+                {user?.photoUrl ? (
+                  <img
+                    src={user.photoUrl}
+                    alt={user.name || 'Profile'}
+                    style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  initials
+                )}
+              </div>
               <div>
                 <div className="user-name">{user?.name}</div>
                 <div className="user-pts">{(stats?.totalCo2 ?? 0).toFixed(1)} kg CO₂ saved</div>
               </div>
             </div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
+              onClick={onLogout}
+            >
+              Sign Out
+            </button>
           </div>
         </aside>
         <main className="main">
@@ -1135,7 +1818,7 @@ function AppShell({ user }) {
               type="button"
               className="mobile-menu-btn"
               onClick={() => {
-                document.getElementById('sidebar')?.classList.toggle('open');
+                setSidebarOpen((v) => !v);
               }}
             >
               ☰
@@ -1155,18 +1838,102 @@ function AppShell({ user }) {
                 ? 'Share Impact'
                 : 'Profile'}
             </div>
+            <div style={{ position: 'relative', marginRight: 12 }}>
+              <button
+                type="button"
+                className="a11y-btn"
+                aria-label="Visual settings"
+                onClick={() => setA11yOpen((v) => !v)}
+              >
+                ⚙️
+              </button>
+              {a11yOpen && (
+                <div className="a11y-panel">
+                  <div className="a11y-label">Visual</div>
+                  <div className="toggle-row">
+                    <span>High Contrast</span>
+                    <button
+                      type="button"
+                      className={`toggle-switch ${highContrast ? 'on' : ''}`}
+                      onClick={() => setHighContrast((v) => !v)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </div>
+                  <div className="toggle-row">
+                    <span>Reduce Motion</span>
+                    <button
+                      type="button"
+                      className={`toggle-switch ${reduceMotion ? 'on' : ''}`}
+                      onClick={() => setReduceMotion((v) => !v)}
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </div>
+                  <div className="a11y-label" style={{ marginTop: 12 }}>
+                    Font Size
+                  </div>
+                  <div className="size-btns">
+                    <button
+                      type="button"
+                      className={`size-btn ${fontSize === 'small' ? 'active' : ''}`}
+                      onClick={() => setFontSize('small')}
+                    >
+                      Small
+                    </button>
+                    <button
+                      type="button"
+                      className={`size-btn ${fontSize === 'default' ? 'active' : ''}`}
+                      onClick={() => setFontSize('default')}
+                    >
+                      Default
+                    </button>
+                    <button
+                      type="button"
+                      className={`size-btn ${fontSize === 'large' ? 'active' : ''}`}
+                      onClick={() => setFontSize('large')}
+                    >
+                      Large
+                    </button>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 16,
+                      fontSize: 11,
+                      color: 'var(--text3)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <span>Global ranking</span>
+                    <span className="text-mono text-xs text-accent">
+                      {leaderboard?.myRank ? `#${leaderboard.myRank}` : '—'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
             <button type="button" className="btn btn-primary" onClick={handleNewAction}>
               + Log Action
             </button>
           </div>
           <div className="content">
-            {page === 'dashboard' && <Dashboard user={user} stats={stats} actions={actions} leaderboard={leaderboard} onShowLog={() => setPage('log')} />}
+            {page === 'dashboard' && (
+              <Dashboard
+                user={user}
+                stats={stats}
+                actions={actions}
+                leaderboard={leaderboard}
+                onShowLog={() => navTo('log')}
+              />
+            )}
             {page === 'log' && <ActionLogPage actions={actions} onNew={handleNewAction} onDelete={removeAction} />}
             {page === 'challenges' && <ChallengesPage challenges={challenges} onJoin={joinChallenge} onProgress={progressChallenge} />}
             {page === 'leaderboard' && <LeaderboardPage data={leaderboard} onChangePeriod={() => {}} />}
             {page === 'tips' && <TipsPage tips={tips} />}
             {page === 'share' && <SharePage stats={stats} />}
-            {page === 'profile' && <ProfilePage user={user} stats={stats} onLogout={() => signOut(auth)} />}
+            {page === 'profile' && <ProfilePage user={user} stats={stats} onLogout={onLogout} />}
           </div>
         </main>
       </div>
@@ -1198,6 +1965,7 @@ export default function App() {
   const stopRealtime = useAppStore((s) => s.stopRealtime);
 
   const [readyUser, setReadyUser] = useState(null);
+  const [showAuth, setShowAuth] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
@@ -1211,6 +1979,7 @@ export default function App() {
         id: fbUser.uid,
         name: fbUser.displayName || 'Eco User',
         email: fbUser.email || '',
+        photoUrl: fbUser.photoURL || '',
       };
       setReadyUser(u);
       setUser(u);
@@ -1219,6 +1988,17 @@ export default function App() {
     return () => unsub();
   }, [setUser, startRealtime, stopRealtime]);
 
-  if (!readyUser) return <AuthScreen onAuthenticated={() => {}} />;
-  return <AppShell user={readyUser} />;
+  if (!readyUser) {
+    if (showAuth) return <AuthScreen onAuthenticated={() => {}} />;
+    return <LandingScreen onStartAuth={() => setShowAuth(true)} />;
+  }
+  return (
+    <AppShell
+      user={readyUser}
+      onLogout={() => {
+        setShowAuth(false);
+        signOut(auth);
+      }}
+    />
+  );
 }

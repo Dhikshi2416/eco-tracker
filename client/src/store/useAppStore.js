@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -15,8 +14,8 @@ import {
   where,
   limit,
 } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { auth, db, storage } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
+import { uploadActionPhotoToCloudinary } from '../lib/cloudinary';
 import { ensureSeedData } from '../lib/seed';
 
 function toDate(v) {
@@ -35,13 +34,17 @@ function computeStats(actions) {
   const cats = { transport: 0, food: 0, energy: 0, waste: 0, water: 0 };
 
   const daySet = new Set();
+  const todayKey = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toDateString();
+  let hasToday = false;
   for (const a of actions) {
     const co2 = Number(a.co2 || 0);
-    const d = toDate(a.date) || now;
+    const d = toDate(a.date || a.createdAt) || now;
     totalCo2 += co2;
     if (d >= weekAgo) weekCo2 += co2;
     if (a.category) cats[a.category] = (cats[a.category] || 0) + co2;
-    daySet.add(new Date(d.getFullYear(), d.getMonth(), d.getDate()).toDateString());
+    const dayKey = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toDateString();
+    daySet.add(dayKey);
+    if (dayKey === todayKey) hasToday = true;
   }
 
   // Streak: consecutive days with >=1 action
@@ -51,6 +54,9 @@ function computeStats(actions) {
     streak += 1;
     cursor.setDate(cursor.getDate() - 1);
   }
+  // If there is at least one action today but the loop above produced 0 (edge cases),
+  // treat it as a 1-day streak so the dashboard reflects today's activity.
+  if (streak === 0 && hasToday) streak = 1;
 
   const totalActions = actions.length;
   const weekActions = actions.filter((a) => {
@@ -71,6 +77,7 @@ async function ensureUserDoc(firebaseUser) {
     {
       displayName: firebaseUser.displayName || 'Eco User',
       email: firebaseUser.email || '',
+      photoUrl: firebaseUser.photoURL || null,
       createdAt: serverTimestamp(),
       totalCo2: 0,
       totalActions: 0,
@@ -81,10 +88,8 @@ async function ensureUserDoc(firebaseUser) {
 
 async function uploadActionPhoto(uid, file) {
   if (!file) return null;
-  const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const storageRef = ref(storage, `action-photos/${uid}/${id}-${file.name}`);
-  await uploadBytes(storageRef, file);
-  return await getDownloadURL(storageRef);
+  // uid kept in signature in case you later want per-user Cloudinary folders
+  return await uploadActionPhotoToCloudinary(file);
 }
 
 export const useAppStore = create((set, get) => ({
@@ -198,7 +203,17 @@ export const useAppStore = create((set, get) => ({
     const fbUser = auth.currentUser;
     if (!fbUser) throw new Error('Not signed in');
 
-    const photoUrl = photoFile ? await uploadActionPhoto(fbUser.uid, photoFile) : null;
+    let photoUrl = null;
+    if (photoFile) {
+      try {
+        photoUrl = await uploadActionPhoto(fbUser.uid, photoFile);
+      } catch (err) {
+        // If photo upload fails, still save the action without a photo
+        // eslint-disable-next-line no-console
+        console.error('Photo upload failed, saving action without photo', err);
+        photoUrl = null;
+      }
+    }
     const actionRef = doc(collection(db, 'actions'));
     const userRef = doc(db, 'users', fbUser.uid);
     const co2 = Number(data.co2 || 0);
@@ -219,10 +234,28 @@ export const useAppStore = create((set, get) => ({
         {
           displayName: fbUser.displayName || 'Eco User',
           email: fbUser.email || '',
+          photoUrl: fbUser.photoURL || null,
         },
         { merge: true },
       );
       tx.update(userRef, { totalCo2: increment(co2), totalActions: increment(1) });
+    });
+
+    // Optimistically update local state so dashboard & log reflect immediately
+    const optimisticAction = {
+      id: actionRef.id,
+      userId: fbUser.uid,
+      category: data.category,
+      type: data.type,
+      notes: data.description || '',
+      co2,
+      date: data.date ? new Date(data.date) : new Date(),
+      photoUrl: photoUrl || null,
+      createdAt: new Date(),
+    };
+    set((state) => {
+      const actions = [optimisticAction, ...(state.actions || [])];
+      return { actions, stats: computeStats(actions) };
     });
 
     // Update user challenge progress for matching category
@@ -264,6 +297,12 @@ export const useAppStore = create((set, get) => ({
       const co2 = Number(data.co2 || 0);
       tx.delete(actionRef);
       tx.update(userRef, { totalCo2: increment(-co2), totalActions: increment(-1) });
+    });
+
+    // Optimistically update local state
+    set((state) => {
+      const actions = (state.actions || []).filter((a) => a.id !== id);
+      return { actions, stats: computeStats(actions) };
     });
   },
 
